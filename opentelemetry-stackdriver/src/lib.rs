@@ -85,9 +85,14 @@ impl StackDriverExporter {
 
 impl SpanExporter for StackDriverExporter {
     fn export(&mut self, batch: Vec<SpanData>) -> BoxFuture<'static, ExportResult> {
+        println!("Attempting export of size: {}", batch.len());
         match self.tx.try_send(batch) {
-            Err(e) => Box::pin(std::future::ready(Err(e.into()))),
+            Err(e) => {
+                println!("FAILED EXPORT: {e}");
+                Box::pin(std::future::ready(Err(e.into())))
+            },
             Ok(()) => {
+                println!("Export successful");
                 self.pending_count.fetch_add(1, Ordering::Relaxed);
                 Box::pin(std::future::ready(Ok(())))
             }
@@ -202,6 +207,7 @@ impl Builder {
             let authorizer = &authenticator;
             let log_client = log_client.clone();
             rx.for_each_concurrent(num_concurrent_requests, move |batch| {
+                println!("EXPORT IMPL");
                 let trace_client = trace_client.clone();
                 let log_client = log_client.clone();
                 let pending_count = count_clone.clone();
@@ -243,7 +249,7 @@ where
 {
     async fn export(mut self, batch: Vec<SpanData>) {
         use proto::devtools::cloudtrace::v2::span::time_event::Value;
-
+        println!("EXPORT IMPL BATCH: {}", batch.len());
         let mut entries = Vec::new();
         let mut spans = Vec::with_capacity(batch.len());
         for span in batch {
@@ -338,8 +344,10 @@ where
 
         self.pending_count.fetch_sub(1, Ordering::Relaxed);
         if let Err(e) = self.authorizer.authorize(&mut req, &self.scopes).await {
+            println!("AUTH FAILED: {e}");
             handle_error(TraceError::from(Error::Authorizer(e.into())));
         } else if let Err(e) = self.trace_client.batch_write_spans(req).await {
+            println!("BATCH WRITE FAILED: {e}");
             handle_error(TraceError::from(Error::Transport(e.into())));
         }
 
@@ -362,8 +370,10 @@ where
         });
 
         if let Err(e) = self.authorizer.authorize(&mut req, &self.scopes).await {
+            println!("WRITE LOG AUTH FAILED: {e}");
             handle_error(TraceError::from(Error::from(e)));
         } else if let Err(e) = client.client.write_log_entries(req).await {
+            println!("WRITE LOG TRANSPORT FAILED: {e}");
             handle_error(TraceError::from(Error::Transport(e.into())));
         }
     }
